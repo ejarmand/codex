@@ -55,6 +55,15 @@ struct WsStream {
     pump_task: tokio::task::JoinHandle<()>,
 }
 
+/// Client ping cadence. The server goes quiet while the model reasons, and on
+/// some networks a websocket that carries no traffic for a few seconds stops
+/// delivering data without ever erroring. Pinging keeps it flowing.
+const WS_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+/// With pings outstanding, this long without any frame from the server (data
+/// or pong) means the socket is dead. Fail it so the turn retries on a fresh
+/// websocket instead of waiting out the much longer stream idle timeout.
+const WS_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(25);
+
 enum WsCommand {
     Send {
         message: Message,
@@ -69,8 +78,27 @@ impl WsStream {
 
         let pump_task = tokio::spawn(async move {
             let mut inner = inner;
+            let mut keepalive = tokio::time::interval_at(
+                Instant::now() + WS_KEEPALIVE_INTERVAL,
+                WS_KEEPALIVE_INTERVAL,
+            );
+            keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut last_inbound = Instant::now();
             loop {
                 tokio::select! {
+                    _ = keepalive.tick() => {
+                        if last_inbound.elapsed() >= WS_KEEPALIVE_TIMEOUT {
+                            let _ = tx_message.send(Err(WsError::Io(std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                "websocket keepalive timeout: no frames from server",
+                            ))));
+                            break;
+                        }
+                        if let Err(err) = inner.send(Message::Ping(Default::default())).await {
+                            let _ = tx_message.send(Err(err));
+                            break;
+                        }
+                    }
                     command = rx_command.recv() => {
                         let Some(command) = command else {
                             break;
@@ -87,6 +115,7 @@ impl WsStream {
                         }
                     }
                     message = inner.next() => {
+                        last_inbound = Instant::now();
                         let Some(message) = message else {
                             break;
                         };
