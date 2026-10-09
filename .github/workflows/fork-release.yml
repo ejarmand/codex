@@ -1,0 +1,78 @@
+# Fork-only: build the patched codex for x86_64 Linux and publish it as the
+# `fork-v<version>` release, which `codex-fork install` downloads. Runs when
+# `codex-fork build` force-pushes the branch rebased onto a new upstream tag.
+name: fork-release
+
+on:
+  push:
+    branches: [ws-keepalive]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      # rustc overflows its stack in an LLVM pass on codex-exec and
+      # codex-app-server without this.
+      RUST_MIN_STACK: "67108864"
+      # The binary gets stripped anyway; skipping debug info saves disk and time.
+      CARGO_PROFILE_RELEASE_DEBUG: "none"
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends pkg-config libcap-dev libasound2-dev
+
+      - name: Read version
+        id: version
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' codex-rs/Cargo.toml | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        working-directory: codex-rs
+        # rustup installs the toolchain pinned in rust-toolchain.toml.
+        run: cargo build --release --bin codex
+
+      - name: Package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p dist/codex-fork
+          strip -o dist/codex-fork/codex codex-rs/target/release/codex
+          # The code-mode helper is unpatched and needs a prebuilt V8, so ship
+          # the official one for the same version.
+          gh release download "rust-v$VERSION" -R openai/codex -D dist/upstream \
+            -p 'codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz'
+          tar -xzf dist/upstream/*.tar.gz -C dist/upstream
+          install -m 755 "$(find dist/upstream -type f -name 'codex-code-mode-host*' ! -name '*.tar.gz' | head -1)" \
+            dist/codex-fork/codex-code-mode-host
+          echo "$VERSION" > dist/codex-fork/VERSION
+          tar -czf dist/codex-fork-x86_64-linux.tar.gz -C dist/codex-fork .
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: fork-v${{ steps.version.outputs.version }}
+        run: |
+          gh release delete "$TAG" --cleanup-tag --yes || true
+          gh release create "$TAG" dist/codex-fork-x86_64-linux.tar.gz \
+            --target "$GITHUB_SHA" --title "$TAG" \
+            --notes "rust-v${{ steps.version.outputs.version }} + ws-keepalive ($GITHUB_SHA)"
