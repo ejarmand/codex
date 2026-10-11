@@ -54,16 +54,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
+        # Ship a complete package (the layout `codex app-server daemon` installs
+        # from): the official one for the same version with codex swapped out.
+        # The helpers in it (code-mode host, rg, bwrap, voice) are unpatched.
         run: |
           mkdir -p dist/codex-fork
-          strip -o dist/codex-fork/codex codex-rs/target/release/codex
-          # The code-mode helper is unpatched and needs a prebuilt V8, so ship
-          # the official one for the same version.
           gh release download "rust-v$VERSION" -R openai/codex -D dist/upstream \
-            -p 'codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz'
-          tar -xzf dist/upstream/*.tar.gz -C dist/upstream
-          install -m 755 "$(find dist/upstream -type f -name 'codex-code-mode-host*' ! -name '*.tar.gz' | head -1)" \
-            dist/codex-fork/codex-code-mode-host
+            -p 'codex-package-x86_64-unknown-linux-musl.tar.gz'
+          tar -xzf dist/upstream/codex-package-x86_64-unknown-linux-musl.tar.gz -C dist/codex-fork
+          strip -o dist/codex-fork/bin/codex codex-rs/target/release/codex
+          # This build links glibc, and the daemon only accepts a package whose
+          # target matches the running binary's.
+          jq '.target = "x86_64-unknown-linux-gnu"' dist/codex-fork/codex-package.json > dist/manifest.json
+          mv dist/manifest.json dist/codex-fork/codex-package.json
+          ln -s bin/codex dist/codex-fork/codex
           echo "$VERSION" > dist/codex-fork/VERSION
           tar -czf dist/codex-fork-x86_64-linux.tar.gz -C dist/codex-fork .
 
