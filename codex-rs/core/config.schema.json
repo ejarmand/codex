@@ -2306,6 +2306,13 @@
       },
       "type": "object"
     },
+    "IpFamilyToml": {
+      "enum": [
+        "ipv4",
+        "ipv6"
+      ],
+      "type": "string"
+    },
     "KeybindingsSpec": {
       "anyOf": [
         {
@@ -7582,6 +7589,14 @@
     "instructions": {
       "description": "System instructions.",
       "type": "string"
+    },
+    "ip_family": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/IpFamilyToml"
+        }
+      ],
+      "description": "Restricts model and HTTP connections to one IP family (`\"ipv4\"` or `\"ipv6\"`), for networks where the other family drops long-lived connections. Unset uses the system's address order. Hosts without an address in that family still connect. Fork-only."
     },
     "log_dir": {
       "allOf": [

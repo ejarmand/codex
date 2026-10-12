@@ -4102,6 +4102,11 @@ impl Config {
         let review_model = override_review_model.or(cfg.review_model);
 
         let check_for_update_on_startup = cfg.check_for_update_on_startup.unwrap_or(true);
+        codex_http_client::set_ip_family(match cfg.ip_family {
+            None => codex_http_client::IpFamily::Any,
+            Some(codex_config::config_toml::IpFamilyToml::Ipv4) => codex_http_client::IpFamily::Ipv4,
+            Some(codex_config::config_toml::IpFamilyToml::Ipv6) => codex_http_client::IpFamily::Ipv6,
+        });
         let model_catalog = load_model_catalog(cfg.model_catalog_json.clone())?;
 
         let log_dir = cfg
