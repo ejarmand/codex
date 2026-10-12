@@ -4042,6 +4042,11 @@ impl Config {
         let mut model_providers =
             merge_configured_model_providers(built_in_model_providers(openai_base_url), cfg.model_providers)
                 .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
+        for provider in model_providers.values_mut() {
+            provider.websocket_keepalive_timeout_ms = provider
+                .websocket_keepalive_timeout_ms
+                .or(cfg.websocket_keepalive_timeout_ms);
+        }
 
         if let Some(provider) = model_providers.get_mut(GCP_PROVIDER_ID) {
             apply_default_gcp_auth(provider, &resolved_cwd);

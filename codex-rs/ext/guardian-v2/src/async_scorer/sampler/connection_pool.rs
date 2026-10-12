@@ -472,7 +472,8 @@ impl ConnectionPool {
         );
 
         let provider_info = self.config.provider.info();
-        let client = ResponsesWebsocketClient::new(provider, auth);
+        let client = ResponsesWebsocketClient::new(provider, auth)
+            .with_keepalive_timeout(provider_info.websocket_keepalive_timeout());
         let connect = async {
             let connector = self
                 .websocket_connector
