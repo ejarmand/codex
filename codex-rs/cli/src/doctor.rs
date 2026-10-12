@@ -2360,7 +2360,8 @@ async fn websocket_reachability_check(
         OPENAI_BETA_HEADER,
         HeaderValue::from_static(RESPONSES_WEBSOCKETS_V2_BETA_HEADER_VALUE),
     );
-    let client = ResponsesWebsocketClient::new(api_provider, api_auth);
+    let client = ResponsesWebsocketClient::new(api_provider, api_auth)
+        .with_keepalive_timeout(provider.websocket_keepalive_timeout());
     let http_client_factory = config.http_client_factory();
     match tokio::time::timeout(
         provider.websocket_connect_timeout(),
