@@ -528,6 +528,11 @@ pub struct ConfigToml {
     /// Defaults to `true`.
     pub check_for_update_on_startup: Option<bool>,
 
+    /// Restricts model and HTTP connections to one IP family (`"ipv4"` or `"ipv6"`), for
+    /// networks where the other family drops long-lived connections. Unset uses the system's
+    /// address order. Hosts without an address in that family still connect. Fork-only.
+    pub ip_family: Option<IpFamilyToml>,
+
     /// Legacy fallback for `tui.disable_paste_burst`. Prefer the setting under `[tui]`.
     pub disable_paste_burst: Option<bool>,
 
@@ -593,6 +598,13 @@ pub struct AutoReviewToml {
     /// Maximum estimated tokens per Guardian history-tool response, before the standard
     /// serialization allowance. Defaults to 4,000; stricter parent tool limits still apply.
     pub conversation_history_max_output_tokens: Option<NonZeroUsize>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IpFamilyToml {
+    Ipv4,
+    Ipv6,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, JsonSchema)]
