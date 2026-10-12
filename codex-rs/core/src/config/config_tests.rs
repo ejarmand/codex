@@ -215,6 +215,46 @@ async fn derive_legacy_sandbox_policy_for_test(
 }
 
 #[tokio::test]
+async fn load_config_applies_websocket_keepalive_timeout() -> std::io::Result<()> {
+    for (text, expected_ms) in [
+        ("", None),
+        ("websocket_keepalive_timeout_ms = 90000", Some(90_000)),
+        (
+            r#"model_provider = "custom"
+websocket_keepalive_timeout_ms = 90000
+[model_providers.custom]
+name = "Custom"
+websocket_keepalive_timeout_ms = 120000
+"#,
+            Some(120_000),
+        ),
+    ] {
+        let codex_home = tempdir()?;
+        let config = Config::load_from_base_config_with_overrides(
+            toml::from_str(text).expect("keepalive config should parse"),
+            ConfigOverrides::default(),
+            codex_home.abs(),
+        )
+        .await?;
+        assert_eq!(
+            config.model_provider.websocket_keepalive_timeout(),
+            expected_ms.map(Duration::from_millis),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn websocket_keepalive_timeout_rejects_zero() {
+    for text in [
+        "websocket_keepalive_timeout_ms = 0",
+        "[model_providers.custom]\nname = 'Custom'\nwebsocket_keepalive_timeout_ms = 0",
+    ] {
+        assert!(toml::from_str::<ConfigToml>(text).is_err());
+    }
+}
+
+#[tokio::test]
 async fn load_config_normalizes_relative_cwd_override() -> std::io::Result<()> {
     let expected_cwd = AbsolutePathBuf::relative_to_current_dir("nested")?;
     let codex_home = tempdir()?;

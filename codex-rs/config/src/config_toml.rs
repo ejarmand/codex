@@ -533,6 +533,11 @@ pub struct ConfigToml {
     /// address order. Hosts without an address in that family still connect. Fork-only.
     pub ip_family: Option<IpFamilyToml>,
 
+    /// Maximum silence in milliseconds before the Responses WebSocket keepalive fails the
+    /// connection. Any inbound frame, including Pong, resets this timeout. Defaults to 60000.
+    /// A custom provider's setting takes precedence. Must be positive. Fork-only.
+    pub websocket_keepalive_timeout_ms: Option<NonZeroU64>,
+
     /// Legacy fallback for `tui.disable_paste_burst`. Prefer the setting under `[tui]`.
     pub disable_paste_burst: Option<bool>,
 

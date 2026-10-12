@@ -59,10 +59,9 @@ struct WsStream {
 /// some networks a websocket that carries no traffic for a few seconds stops
 /// delivering data without ever erroring. Pinging keeps it flowing.
 const WS_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
-/// With pings outstanding, this long without any frame from the server (data
-/// or pong) means the socket is dead. Fail it so the turn retries on a fresh
-/// websocket instead of waiting out the much longer stream idle timeout.
-const WS_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(25);
+/// Default maximum silence, including Pong replies, before failing the socket.
+/// Providers may override it to tolerate slower replies during long reasoning turns.
+const DEFAULT_WS_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(60);
 
 enum WsCommand {
     Send {
@@ -72,7 +71,7 @@ enum WsCommand {
 }
 
 impl WsStream {
-    fn new(inner: WebSocketConnection) -> Self {
+    fn new(inner: WebSocketConnection, keepalive_timeout: Duration) -> Self {
         let (tx_command, mut rx_command) = mpsc::channel::<WsCommand>(32);
         let (tx_message, rx_message) = mpsc::unbounded_channel::<Result<Message, WsError>>();
 
@@ -87,7 +86,7 @@ impl WsStream {
             loop {
                 tokio::select! {
                     _ = keepalive.tick() => {
-                        if last_inbound.elapsed() >= WS_KEEPALIVE_TIMEOUT {
+                        if last_inbound.elapsed() >= keepalive_timeout {
                             let _ = tx_message.send(Err(WsError::Io(std::io::Error::new(
                                 std::io::ErrorKind::TimedOut,
                                 "websocket keepalive timeout: no frames from server",
@@ -422,6 +421,7 @@ mod connector;
 pub struct ResponsesWebsocketClient {
     provider: Provider,
     auth: SharedAuthProvider,
+    keepalive_timeout: Duration,
 }
 
 /// Close frame information captured by a handshake probe.
@@ -451,7 +451,17 @@ pub struct ResponsesWebsocketProbe {
 impl ResponsesWebsocketClient {
     /// Creates a Responses WebSocket client for an already-resolved provider and auth source.
     pub fn new(provider: Provider, auth: SharedAuthProvider) -> Self {
-        Self { provider, auth }
+        Self {
+            provider,
+            auth,
+            keepalive_timeout: DEFAULT_WS_KEEPALIVE_TIMEOUT,
+        }
+    }
+
+    /// Overrides the maximum silence tolerated by the client ping watchdog.
+    pub fn with_keepalive_timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.keepalive_timeout = timeout.unwrap_or(DEFAULT_WS_KEEPALIVE_TIMEOUT);
+        self
     }
 
     pub async fn connect(
@@ -504,6 +514,7 @@ impl ResponsesWebsocketClient {
             headers,
             &connector,
             /*turn_state*/ None,
+            self.keepalive_timeout,
         )
         .await?;
         let immediate_close = tokio::time::timeout(immediate_close_timeout, stream.next())
@@ -558,6 +569,7 @@ async fn connect_websocket(
     headers: HeaderMap,
     connector: &WebSocketConnector,
     turn_state: Option<Arc<OnceLock<String>>>,
+    keepalive_timeout: Duration,
 ) -> Result<(WsStream, StatusCode, bool, Option<String>), ApiError> {
     info!("connecting to websocket: {url}");
 
@@ -595,7 +607,7 @@ async fn connect_websocket(
         let _ = turn_state.set(header_value.to_string());
     }
     Ok((
-        WsStream::new(stream),
+        WsStream::new(stream, keepalive_timeout),
         response.status(),
         reasoning_included,
         server_model,
@@ -1075,6 +1087,89 @@ mod tests {
     use serde_json::value::to_raw_value;
     use std::collections::HashMap;
     use std::sync::Arc;
+
+    struct KeepaliveTestAuth;
+
+    impl crate::auth::AuthProvider for KeepaliveTestAuth {
+        fn add_auth_headers(&self, _headers: &mut HeaderMap) {}
+    }
+
+    async fn assert_keepalive_timeout(timeout: Option<Duration>, expected_seconds: u64) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock websocket");
+        let address = listener.local_addr().expect("mock websocket address");
+        let provider = Provider {
+            name: "keepalive-test".to_string(),
+            base_url: format!("http://{address}"),
+            query_params: None,
+            headers: HeaderMap::new(),
+            retry: crate::RetryConfig {
+                max_attempts: 0,
+                base_delay: Duration::ZERO,
+                retry_429: false,
+                retry_5xx: false,
+                retry_transport: false,
+            },
+            stream_idle_timeout: Duration::from_secs(300),
+        };
+        let client = ResponsesWebsocketClient::new(provider, Arc::new(KeepaliveTestAuth))
+            .with_keepalive_timeout(timeout);
+        let factory =
+            HttpClientFactory::new(codex_http_client::OutboundProxyPolicy::ReqwestDefault);
+        let connect = client.connect(
+            &factory,
+            HeaderMap::new(),
+            HeaderMap::new(),
+            /*turn_state*/ None,
+            /*telemetry*/ None,
+        );
+        let accept = async {
+            let (socket, _) = listener.accept().await.expect("accept mock websocket");
+            tokio_tungstenite::accept_async_with_config(socket, Some(websocket_config()))
+                .await
+                .expect("mock websocket handshake")
+        };
+        let (connection, server) = tokio::join!(connect, accept);
+        let connection = connection.expect("client websocket handshake");
+
+        // Keep the peer open without reading, so it never replies to client pings.
+        tokio::time::pause();
+        for _ in 1..expected_seconds / 10 {
+            tokio::time::advance(Duration::from_secs(10)).await;
+            tokio::task::yield_now().await;
+            assert!(
+                !connection.is_closed().await,
+                "closed before configured timeout"
+            );
+        }
+        tokio::time::advance(Duration::from_secs(10)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            connection.is_closed().await,
+            "unresponsive peer did not time out"
+        );
+        let mut stream = connection.stream.lock().await;
+        let error = stream
+            .as_mut()
+            .expect("websocket stream")
+            .next()
+            .await
+            .expect("keepalive error")
+            .expect_err("unresponsive peer should fail");
+        assert_matches::assert_matches!(error, WsError::Io(error) if error.kind() == std::io::ErrorKind::TimedOut);
+        drop(server);
+    }
+
+    #[tokio::test]
+    async fn websocket_keepalive_defaults_to_one_minute() {
+        assert_keepalive_timeout(/*timeout*/ None, /*expected_seconds*/ 60).await;
+    }
+
+    #[tokio::test]
+    async fn websocket_keepalive_uses_configured_timeout() {
+        assert_keepalive_timeout(Some(Duration::from_secs(20)), /*expected_seconds*/ 20).await;
+    }
 
     #[test]
     fn direct_serialization_preserves_websocket_request_payload() {
