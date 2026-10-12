@@ -3006,6 +3006,12 @@
           "minimum": 0.0,
           "type": "integer"
         },
+        "websocket_keepalive_timeout_ms": {
+          "description": "Maximum silence in milliseconds before the Responses WebSocket keepalive fails the connection. Inherits the top-level setting, otherwise defaults to 60000. Must be positive.",
+          "format": "uint64",
+          "minimum": 1.0,
+          "type": "integer"
+        },
         "wire_api": {
           "allOf": [
             {
@@ -8330,6 +8336,12 @@
         }
       ],
       "description": "Controls the web search tool mode: disabled, cached, indexed, or live."
+    },
+    "websocket_keepalive_timeout_ms": {
+      "description": "Maximum silence in milliseconds before the Responses WebSocket keepalive fails the connection. Any inbound frame, including Pong, resets this timeout. Defaults to 60000. A custom provider's setting takes precedence. Must be positive. Fork-only.",
+      "format": "uint64",
+      "minimum": 1.0,
+      "type": "integer"
     },
     "windows": {
       "allOf": [

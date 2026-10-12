@@ -189,6 +189,9 @@ pub struct ModelProviderInfo {
     /// Maximum time (in milliseconds) to wait for a websocket connection attempt before treating
     /// it as failed.
     pub websocket_connect_timeout_ms: Option<u64>,
+    /// Maximum silence in milliseconds before the Responses WebSocket keepalive fails the
+    /// connection. Inherits the top-level setting, otherwise defaults to 60000. Must be positive.
+    pub websocket_keepalive_timeout_ms: Option<NonZeroU64>,
     /// Does this provider require an OpenAI API key or ChatGPT login token? If true,
     /// the user is presented with a login screen on first run, and credentials are
     /// stored using the backend selected by `cli_auth_credentials_store`.
@@ -525,6 +528,11 @@ other non-default provider fields are not supported"
             .unwrap_or(Duration::from_millis(DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS))
     }
 
+    pub fn websocket_keepalive_timeout(&self) -> Option<Duration> {
+        self.websocket_keepalive_timeout_ms
+            .map(|timeout| Duration::from_millis(timeout.get()))
+    }
+
     pub fn create_openai_provider(base_url: Option<String>) -> ModelProviderInfo {
         ModelProviderInfo {
             name: OPENAI_PROVIDER_NAME.into(),
@@ -559,6 +567,7 @@ other non-default provider fields are not supported"
             stream_max_retries: None,
             stream_idle_timeout_ms: None,
             websocket_connect_timeout_ms: None,
+            websocket_keepalive_timeout_ms: None,
             requires_openai_auth: true,
             supports_websockets: true,
             supports_standalone_web_search: true,
@@ -599,6 +608,7 @@ other non-default provider fields are not supported"
             stream_max_retries: None,
             stream_idle_timeout_ms: None,
             websocket_connect_timeout_ms: None,
+            websocket_keepalive_timeout_ms: None,
             requires_openai_auth: false,
             supports_websockets: false,
             supports_standalone_web_search: false,
@@ -773,6 +783,7 @@ pub fn create_oss_provider_with_base_url(base_url: &str, wire_api: WireApi) -> M
         stream_max_retries: None,
         stream_idle_timeout_ms: None,
         websocket_connect_timeout_ms: None,
+        websocket_keepalive_timeout_ms: None,
         requires_openai_auth: false,
         supports_websockets: false,
         supports_standalone_web_search: false,
