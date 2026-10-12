@@ -410,6 +410,9 @@ impl HttpClientBuilder {
         if let Some(connect_timeout) = self.connect_timeout {
             builder = builder.connect_timeout(connect_timeout);
         }
+        if let Some(local_address) = crate::ip_family::local_address() {
+            builder = builder.local_address(local_address);
+        }
         if self.chatgpt_cloudflare_cookie_store {
             builder = match self.chatgpt_cookie_store {
                 Some(store) => builder.cookie_provider(store),

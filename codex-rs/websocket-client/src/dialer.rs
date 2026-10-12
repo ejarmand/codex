@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use codex_http_client::IpFamily;
 use codex_http_client::OutboundProxyRoute;
 #[cfg(windows)]
 use codex_http_client::WindowsProxyTls;
@@ -49,6 +50,13 @@ pub(crate) async fn connect(
 ) -> Result<(ConnectionInner, Response), WebSocketError> {
     let disable_nagle = tcp_nodelay == TcpNodelay::Enabled;
     let proxy_url = match proxy_route {
+        // Tungstenite's dialer can't restrict the IP family; dial directly when no proxy
+        // environment variable would have applied.
+        OutboundProxyRoute::TransportDefault
+            if codex_http_client::ip_family() != IpFamily::Any && !proxy_env_configured() =>
+        {
+            None
+        }
         OutboundProxyRoute::TransportDefault => {
             // The workspace enables tokio-tungstenite's `proxy` feature, so its default dialer
             // resolves HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, and NO_PROXY before opening the socket.
@@ -243,7 +251,20 @@ fn host_port(host: &str, port: u16) -> String {
 
 async fn connect_tcp(address: String, tcp_nodelay: TcpNodelay) -> io::Result<TcpStream> {
     let addresses = tokio::net::lookup_host(address).await?.collect::<Vec<_>>();
-    connect_resolved_tcp(addresses, tcp_nodelay).await
+    connect_resolved_tcp(codex_http_client::filter_addresses(addresses), tcp_nodelay).await
+}
+
+fn proxy_env_configured() -> bool {
+    [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ]
+    .iter()
+    .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
 }
 
 async fn connect_loopback_tcp(address: String, tcp_nodelay: TcpNodelay) -> io::Result<TcpStream> {
