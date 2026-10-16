@@ -519,7 +519,6 @@ mod tests {
                             stream_max_retries: Some(8),
                             stream_idle_timeout_ms: Some(9_000),
                             websocket_connect_timeout_ms: Some(10_000),
-                            websocket_keepalive_timeout_ms: None,
                             requires_openai_auth: false,
                             supports_websockets: true,
                             supports_standalone_web_search: true,
